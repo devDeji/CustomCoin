@@ -3,29 +3,40 @@ const bodyParser = require('body-parser');
 const httpServer = require('http').Server(app);
 const axios = require('axios');
 const io = require('socket.io')(httpServer);
+const sockets = require('socket.io');
 const client = require('socket.io-client');
-
+const wallet = require('./utils/wallet');
+const chainUtils = require('./utils/chain-utils');
 const BlockChain = require('./models/chain');
+const transactionPl = require('./models/transactionPool');
+const Block = require('./models/block');
 const SocketActions  = require('./constants');
 
 const socketListeners = require('./socketListeners');
+const Transaction = require('./models/transaction');
 
-const { PORT } = process.env;
+//const  PORT = 3000;
 
+const PORT = process.env.PORT || 3001;
+const senderWallet = new wallet();
+const transactionPool = transactionPl.getInstance();
 const blockChain = new BlockChain(null, io);
-
+const block = new Block(0, 1, 0, []);
 app.use(bodyParser.json());
 
 app.post('/nodes', (req, res) => {
   const { host, port } = req.body;
   const { callback } = req.query;
-  const node = `http://${host}:${port}`;
+  const node = host+':'+port;
+	console.log('node: '+node);
   const socketNode = socketListeners(client(node), blockChain);
+	console.log('socketNode /nodes'+socketNode);
   blockChain.addNode(socketNode, blockChain);
   if (callback === 'true') {
     console.info(`Added node ${node} back`);
     res.json({ status: 'Added node Back' }).end();
   } else {
+	  console.log('axios post on:'+'${node}/nodes?callback=true');
     axios.post(`${node}/nodes?callback=true`, {
       host: req.hostname,
       port: PORT,
@@ -35,18 +46,89 @@ app.post('/nodes', (req, res) => {
   }
 });
 
-app.post('/transaction', (req, res) => {
-  const { sender, receiver, amount } = req.body;
-  io.emit(SocketActions.ADD_TRANSACTION, sender, receiver, amount);
-  res.json({ message: 'transaction success' }).end();
+app.post('/testnodes', (req, res) => {
+  const {  msg }  = req.body;
+  io.emit('broadcast without broad...');
+  io.emit(SocketActions.TEST, msg);
+ // socket.broadcast.emit('broadcasting mess: ');
+  res.json({ message: 'Sent test broadcast: '+ msg }).end();
 });
 
+app.post('/transaction', (req, res) => {                     const { sender, receiver, amount } = req.body;  
+	//console.log('Using txn pool: '+ transactionPool.id);
+console.log('Receiv.. new transaction on main node sender pk: '+senderWallet.publicKey);
+          console.log('TransactionPool: '+transactionPool.id);             const transaction = new Transaction(sender, receiver, amount);
+     // TransactionPool.addTransaction(transaction);
+          //let txnPoolIns = transactionPl.getInstance();
+
+          let  txnPoolIns = transactionPl.addTransaction(transaction
+, transactionPool);                                                      let txnPoolTxn = txnPoolIns.transactions;
+          console.log('Tranpool: length'+ txnPoolTxn.length);
+          //Initial trans pool entry[0] is empty check server.js
+          for (let i = 1; i < txnPoolTxn.length; i++){
+              console.log('Cycling thru trans pool: '+txnPoolTxn[i].id
+);
+       let currTxn = txnPoolTxn[i];
+                if(!currTxn.mined){
+              console.log('Found unmined txn: '+ currTxn.id);
+
+	io.emit(SocketActions.ADD_TRANSACTION, senderWallet, currTxn, receiver, amount);            
+} 
+}
+	res.json({ message: 'transaction added' }).end();
+});
+//called after the post /transaction call to newTransaction 
 app.get('/chain', (req, res) => {
   res.json(blockChain.toArray()).end();
 });
 
+app.get('/', (req, res) => {
+  console.log('req hostname: '+req.hostname);
+ console.log('client: '+ client);
+  res.json('req: '+req.body).end();
+});
+
+app.get('/hash', (req, res) => {
+	let { yoHash }  = req.query;
+  console.log('yoHash: '+ yoHash);
+  res.json('hasd val: '+ chainUtils.hash(yoHash)).end();
+});
+
+app.get('/nodes', (req, res) => {
+	//console.log(blockChain.getNodes()[0].uri
+	//)
+	let nodesUri = [];
+   for(let i = 0; i < blockChain.getNodes().length; i++){
+        nodesUri.push(blockChain.getNodes()[i].io.uri);
+        //let nodes = blockChain.getNodes()[i].io.uri;
+	console.log(nodesUri);
+	}
+	res.json(nodesUri).end();
+});
+
+app.get('/currentTransactions', (req, res) => {
+  res.json(blockChain.getCurrTrans()).end();
+});
+
+//get public key
+app.get('/address', (req, res)=> {
+	res.json({
+		publicKey: senderWallet.publicKey
+	});
+});
+
+//get wallet balance
+app.get('/balance', (req, res)=> {
+	let { addr }= req.query;
+        res.json({
+               Wallet_balance: senderWallet.balance                  });
+});
+
 io.on('connection', (socket) => {
-  console.info(`Socket connected, ID: ${socket.id}`);
+  console.info(`Socket connected, ID: ${socket}`);
+  socket.emit('news', { hello: 'world' });
+  socket.on('my other event', function (data) {
+    console.log(data);});
   socket.on('disconnect', () => {
     console.log(`Socket disconnected, ID: ${socket.id}`);
   });
